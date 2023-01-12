@@ -905,7 +905,7 @@ contingent_df <- speech %>%
   rbind(., for_cont) %>%
   arrange(child_id, clip_offset) %>%
   group_by(child_id) %>%
-  mutate(speech_lag = clip_offset - lag(clip_offset, default = clip_offset[1])) %>% # calculate lag time
+  mutate(speech_lag = clip_onset - lag(clip_offset, default = clip_offset[1])) %>% # calculate lag time
   mutate(contingent = if_else(speech_lag <=2, "Y", "N")) 
 
 total_chn <- contingent_df %>%
@@ -950,7 +950,7 @@ time_vocs <- speech %>%
   rbind(., for_temp) %>%
   arrange(child_id, clip_offset) %>%
   group_by(child_id) %>%
-  mutate(speech_lag = clip_offset - lag(clip_offset, default = clip_offset[1])) %>% # calculate lag time
+  mutate(speech_lag = clip_onset - lag(clip_offset, default = clip_offset[1])) %>% # calculate lag time
   mutate(contingent = if_else(speech_lag <=2, "Y", "N")) %>%
   filter(contingent=='Y' & segment_type=='CHN' & (lag(segment_type=='FAN')|lag(segment_type=='MAN'))) %>% # filter to only get child vocs contingent with an adult
   merge(its_df, by='child_id') %>%
