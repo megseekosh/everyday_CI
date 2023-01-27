@@ -15,7 +15,7 @@ Cychosz, M., Edwards, J. R., Munson, B., Romeo, R. R., Kosie, J., & Newman, R. S
 * `dataframes/icphs_voc_its.csv` - basic metadata about each .its file
 
 # scripts to process .its files
-## Note that these scripts were adapted from scripts also located in the [HomeBank Git Repo](https://github.com/HomeBankCode)
+#### Note that these scripts were adapted from scripts also located in the [HomeBank Git Repo](https://github.com/HomeBankCode)
 
 * `get_CHN_clips.py` - extract data about child vocalizations from LENA .its files (counts, intensity, timestamps, etc.)
 
