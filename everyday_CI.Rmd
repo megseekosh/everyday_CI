@@ -32,6 +32,12 @@ library('tibble')
 opts_chunk$set(echo = TRUE,warning=FALSE,error=FALSE,message=FALSE)
 ```
 
+```{r, define scaling}
+center_scale <- function(x) {
+    scale(x, scale = FALSE)
+}
+```
+
 ```{r, load in matches}
 matches <- read.csv('dataframes/CI_TH_matches.csv') %>% 
   select(-gender)
@@ -235,7 +241,22 @@ demo <- its_df %>%
 mat_ed <- demo %>%
   select(match, Mat_ed) %>%
   spread(match, Mat_ed) %>%
-  mutate(measure='Maternal Education')
+  mutate(measure='Maternal Education') 
+
+household <- matches %>% 
+  group_by(match) %>%
+  summarize(avg_sibs = mean(num_siblings_excluding_child),
+            sd_sibs = sd(num_siblings_excluding_child),
+            min_sibs = min(num_siblings_excluding_child),
+            max_sibs = max(num_siblings_excluding_child),
+            avg_mem = mean(num_household_including_child),
+            sd_mem = sd(num_household_including_child),
+            min_mem = min(num_household_including_child),
+            max_mem = max(num_household_including_child)) %>%
+  mutate_if(is.numeric, round, 2) %>%
+  mutate(Siblings=paste0(avg_sibs, '(', sd_sibs, ')', ',',min_sibs, '-', max_sibs),
+         Household_members=paste0(avg_mem,'(',sd_mem,')',',',min_mem,'-',max_mem)) %>%
+  select(match, Siblings,Household_members)
 
 ci_demo <- its_df %>%
   filter(match=='CI') %>%
@@ -341,6 +362,7 @@ voc_tbl <- intensity %>%
   mutate(measure = case_when(measure=='1'~'intensity',
             measure=='2'~'num_vocs_hr',
             TRUE~'voc_dur'))
+  
 ```
 
 ```{r, compute the consistency of vocalizations}
@@ -407,9 +429,10 @@ voc_growth_tbl <- its_df %>%
   select(child_id, age_mos) %>%
   merge(., recording_vocs, by='child_id') %>%
   rbind(., ha_kids) %>%
+  mutate(age_mos_centered = center_scale(age_mos)) %>%
   group_by(match) %>%
-  do(voc_growth = lm(normed_vocs~age_mos, data=.),
-     mod2 = cor(.$normed_vocs, .$age_mos, method = "pearson")) %>%
+  do(voc_growth = lm(normed_vocs~age_mos_centered, data=.),
+     mod2 = cor(.$normed_vocs, .$age_mos_centered, method = "pearson")) %>%
   mutate(slope = summary(voc_growth)$coeff[2],
          p_value = summary(voc_growth)$coeff[8],
          Pearson = mod2[1]) %>%
@@ -420,22 +443,51 @@ voc_growth_tbl <- its_df %>%
   spread(match, stats) %>%
   mutate(measure='Child voc. quantity growth') 
 
-voc_dur_growth_tbl <- its_df %>%
-  select(child_id, age_mos) %>%
-  merge(., recording_vocs, by='child_id') %>%
-  rbind(., ha_kids) %>%
+# create a 4th "match" of CI kids to compute hearing age for repeated measures analysis
+ha_kids_repeat <- vocs %>%
+  filter(match=='CI') %>%
+  select(-age_mos, -match) %>%
+  mutate(age_mos = hearing_age,
+         match = 'CI_by_hearing_age') %>%
+  filter(!hearing_age <= 12)  # remove the two kids who weren't matched by hearing age 
+   
+
+lmer_sum <- function(x,...) {
+      m <- lmer(x,...)
+      c(fixef(m),unlist(VarCorr(m)))
+        data.frame(rbind(c(fixef(m),unlist(VarCorr(m)))),
+                   check.names=FALSE)
+}
+
+# the mixed model
+voc_dur_nested <-  vocs %>% 
+    rbind(., ha_kids_repeat) %>%
+    mutate(age_mos_centered = center_scale(age_mos)) %>%
+    group_by(match) %>%
+    do(lmer_sum(.,formula=childUttLen*1000~age_mos_centered+(1|child_id))) # the mixed model
+
+# p-values
+voc_growth_pvalues <- vocs %>% 
+  rbind(., ha_kids_repeat) %>%
+    mutate(age_mos_centered = center_scale(age_mos)) %>%
+    group_by(match) %>%
+    do(model = lmer(childUttLen*1000~age_mos_centered+(1|child_id), data=.)) 
+
+# the correlation stat
+voc_dur_growth_tbl <- vocs %>%
+  rbind(., ha_kids_repeat) %>%
+  mutate(age_mos_centered = center_scale(age_mos)) %>%
   group_by(match) %>%
-  do(voc_growth = lm(avg_dur*1000~age_mos, data=.),
-     mod2 = cor(.$avg_dur*1000, .$age_mos, method = "pearson")) %>%
-  mutate(slope = summary(voc_growth)$coeff[2],
-         p_value = summary(voc_growth)$coeff[8],
-         Pearson = mod2[1]) %>%
-  select(match, slope, p_value, Pearson) %>%
+  do(mod2 = cor(.$childUttLen*1000, .$age_mos_centered, method = "pearson")) %>%
+  mutate(Pearson = mod2[1]) %>%
+  merge(., voc_dur_nested, by='match') %>%
+  select(match, age_mos_centered, Pearson) %>%
   mutate_if(is.numeric, round, 2) %>%
-  mutate(stats=paste0('B=',slope,",","p=",p_value, ",","r=", Pearson)) %>%
-  select(-slope, -p_value, -Pearson) %>%
+  mutate(stats=paste0('B=',age_mos_centered,",","r=", Pearson)) %>%
+  select(-age_mos_centered, -Pearson) %>%
   spread(match, stats) %>%
-  mutate(measure='Child voc. duration growth (ms)') 
+  mutate(measure='Child voc. duration growth') 
+
 ```
 
 ## Visualize vocalizations
@@ -508,11 +560,12 @@ hourly_vocLen_m0 <- lmer(childUttLen*1000~ + (1 | child_id), data=vocs)
 hourly_vocLen_m1 <- lmer(childUttLen*1000~ match+ (1 | child_id), data=vocs)
 anova(hourly_vocLen_m0,hourly_vocLen_m1)
 
+
 # hourly measures 
 hourly_vocs$match <- relevel(factor(hourly_vocs$match), ref = "CI")
 hourly_vocs$hours <- as.factor(hourly_vocs$hours)
-hourly_vocs_m0 <- lmer(normed_hourly_vocs~ + (1|child_id) + (1|hours), data=hourly_vocs)
-hourly_vocs_m1 <- lmer(normed_hourly_vocs~ match+ (1|child_id) + (1|hours), data=hourly_vocs)
+hourly_vocs_m0 <- lmer(normed_hourly_vocs~ + (1 | child_id) + (1|hours), data=hourly_vocs)
+hourly_vocs_m1 <- lmer(normed_hourly_vocs~ match + (1 | child_id) + (1|hours), data=hourly_vocs)
 anova(hourly_vocs_m0,hourly_vocs_m1)
 
 # ---------- CONSISTENCY ------------
@@ -523,6 +576,7 @@ voc_consis_m1 <- lm(perc_vocs~ age_mos + match, data=voc_consis2)
 anova(voc_consis_m0,voc_consis_m1) # no
 voc_consis_m2 <- lm(perc_vocs~ age_mos*match, data=voc_consis2)
 anova(voc_consis_m0,voc_consis_m2) # no
+
 ```
 
 # Input analyses
@@ -535,6 +589,7 @@ recording_speech <- speech %>%
   group_by(match, child_id) %>%
   summarize(normed_words = sum(wordCount)/total_hrs, # avg. number of words/hr
             normed_speech = sum(duration)/total_hrs) %>%  # avg. # of seconds of speech/hr
+  mutate(normed_mins_speech = normed_speech/60) %>%
   distinct(child_id, .keep_all = T) 
 
 prep_speech_quantity_tbl <- recording_speech %>%
@@ -582,7 +637,7 @@ speech_quantity_tbl <- intensity_stat %>%
   rownames_to_column(.,var = 'measure') %>%
   mutate(measure = case_when(measure=='1'~'intensity',
             measure=='2'~'num_words_hr',
-            TRUE~'mins_speech_hr'))
+            TRUE~'secs_speech_hr'))
 
   
 # the num of words and amount of speech from adults for each child, for each hour of the day
@@ -591,8 +646,8 @@ hourly_speech <- speech %>%
   group_by(match, implanted, child_id, age_mos, hours) %>% 
   summarize(normed_hourly_words = sum(wordCount),
             normed_hourly_speech = sum(duration)) %>%
-  filter(normed_hourly_speech>3) # remove all hours with less than 3 seconds of speech
-
+  filter(normed_hourly_speech>3) %>% # remove all hours with less than 3 seconds of speech
+  mutate(normed_hourly_mins = normed_hourly_speech/60)
 # now choose the highest vocal activity hour
 # for each child
 high_word_hour <- hourly_speech %>%
@@ -698,11 +753,12 @@ input_growth_tbl <- its_df %>%
   select(child_id, age_mos) %>%
   merge(., recording_speech, by='child_id') %>%
   rbind(., ha_speech) %>%
+  mutate(age_mos_centered = center_scale(age_mos)) %>%
   group_by(match) %>%
-  do(speech_growth = lm(normed_words~age_mos, data=.),
-     mod2 = cor(.$normed_words, .$age_mos, method = "pearson")) %>%
-  mutate(slope = summary(speech_growth)$coeff[2],
-         p_value = summary(speech_growth)$coeff[8],
+  do(word_growth = lm(normed_words~age_mos_centered, data=.),
+     mod2 = cor(.$normed_words, .$age_mos_centered, method = "pearson")) %>%
+  mutate(slope = summary(word_growth)$coeff[2],
+         p_value = summary(word_growth)$coeff[8],
          Pearson = mod2[1]) %>%
   select(match, slope, p_value, Pearson) %>%
   mutate_if(is.numeric, round, 2) %>%
@@ -710,44 +766,91 @@ input_growth_tbl <- its_df %>%
   select(-slope, -p_value, -Pearson) %>%
   spread(match, stats) %>%
   mutate(measure='Adult word growth') 
+
+speech_input_growth_tbl <- its_df %>%
+  select(child_id, age_mos) %>%
+  merge(., recording_speech, by='child_id') %>%
+  rbind(., ha_speech) %>%
+  mutate(age_mos_centered = center_scale(age_mos)) %>%
+  group_by(match) %>%
+  do(speech_growth = lm(normed_speech~age_mos_centered, data=.),
+     mod2 = cor(.$normed_speech, .$age_mos_centered, method = "pearson")) %>%
+  mutate(slope = summary(speech_growth)$coeff[2],
+         p_value = summary(speech_growth)$coeff[8],
+         Pearson = mod2[1]) %>%
+  select(match, slope, p_value, Pearson) %>%
+  mutate_if(is.numeric, round, 3) %>%
+  mutate(stats=paste0('B=',slope,",","p=",p_value, ",","r=", Pearson)) %>%
+  select(-slope, -p_value, -Pearson) %>%
+  spread(match, stats) %>%
+  mutate(measure='Adult speech (minutes) growth') 
+```
+
+## Visualize input
+
+```{r, plot histogram to show indiviudal differences in sound level}
+speech %>%
+    mutate(match=recode(match,
+                      chrono='Chrono. \n age matches',
+                      CI='Cochlear implant',
+                      HA='Hearing \n age matches')) %>%
+ggplot(., aes(x=avg_dB, group=child_id, color=match,fill=match)) +
+    geom_density(adjust=1.5,alpha=.05,lwd = .3) +
+    scale_color_manual(values=c("#1B9E77","#7570B3","#E7298A")) +
+    scale_fill_manual(values=c("#1B9E77","#7570B3","#E7298A")) +
+    facet_grid(~match) +
+    xlab('Caregiver speech intensity (dB)') +
+    theme(axis.title = element_text(face ="bold", size=12),
+        legend.position = "none",
+        axis.text = element_text(face="bold", color='gray50', size=9),
+        strip.text=element_text(face='bold', size=10))
 ```
 
 ## Model input
+
+```{r, center input variables}
+hourly_speech <- hourly_speech %>%
+  mutate(age_mos_centered = center_scale(age_mos))
+```
+
 ```{r, model input}
 # ---------- QUANTITY ------------
 # repeated measures
 # intensity
 speech$match <- relevel(factor(speech$match), ref = "CI")
-speech_intensity_m0 <- lmer(avg_dB~ + (1|child_id), data=speech)
-speech_intensity_m1 <- lmer(avg_dB~match + (1|child_id), data=speech)
+speech_intensity_m0 <- lmer(avg_dB~ + (1 | child_id), data=speech)
+speech_intensity_m1 <- lmer(avg_dB~match + (1 | child_id), data=speech)
 anova(speech_intensity_m0,speech_intensity_m1)
 
 # hourly measures 
 # minutes
 hourly_speech$match <- relevel(factor(hourly_speech$match), ref = "CI")
 hourly_speech$hours <- as.factor(hourly_speech$hours)
-hourly_speech_m0 <- lmer(normed_hourly_speech~ + (1|child_id) + (1|hours), data=hourly_speech)
-hourly_speech_m1 <- lmer(normed_hourly_speech~ match+ (1|child_id) + (1|hours), data=hourly_speech)
+hourly_speech_m0 <- lmer(normed_hourly_mins~ + (1 | child_id) + (1|hours), data=hourly_speech)
+hourly_speech_m1 <- lmer(normed_hourly_mins~ match+ (1 | child_id) + (1|hours), data=hourly_speech)
 anova(hourly_speech_m0,hourly_speech_m1)
-hourly_speech_m2 <- lmer(normed_hourly_speech~ age_mos+ (1|child_id) + (1|hours), data=hourly_speech)
-anova(hourly_speech_m0,hourly_speech_m2)
+# does the overall amount of speech change as children age?
+hourly_speech_m2 <- lmer(normed_hourly_mins~ age_mos_centered+ (1 | child_id) + (1|hours), data=hourly_speech)
 
 # words
 hourly_mins_m0 <- lmer(normed_hourly_words~ + (1 | child_id) + (1|hours), data=hourly_speech)
 hourly_mins_m1 <- lmer(normed_hourly_words~ match+ (1 | child_id) + (1|hours), data=hourly_speech)
 anova(hourly_mins_m0,hourly_mins_m1)
 # does the overall amount of speech change as children age?
-hourly_mins_m2 <- lmer(normed_hourly_words~ age_mos+ (1 | child_id) + (1|hours), data=hourly_speech)
-
+hourly_mins_m2 <- lmer(normed_hourly_words~ age_mos_centered+ (1 | child_id) + (1|hours), data=hourly_speech)
 
 
 # ---------- CONSISTENCY ------------
 input_consis2 <- its_df %>% select(age_mos, child_id) %>% merge(., input_consis, by='child_id')
+
+input_consis2 <- input_consis2 %>%
+  mutate(age_mos_centered = center_scale(age_mos))
+
 input_consis2$match <- relevel(factor(input_consis2$match), ref = "CI")
-speech_consis_m0 <- lm(perc_words~age_mos, data=input_consis2)
-speech_consis_m1 <- lm(perc_words~ age_mos + match, data=input_consis2)
+speech_consis_m0 <- lm(perc_words~age_mos_centered, data=input_consis2)
+speech_consis_m1 <- lm(perc_words~ age_mos_centered + match, data=input_consis2)
 anova(speech_consis_m0,speech_consis_m1) # no
-speech_consis_m2 <- lm(perc_words~ age_mos*match, data=input_consis2)
+speech_consis_m2 <- lm(perc_words~ age_mos_centered*match, data=input_consis2)
 anova(speech_consis_m0,speech_consis_m2) # no
 ```
 
@@ -784,6 +887,8 @@ turn_quantity_tbl <- convo %>%
   select(match, turn_quantity) %>%
   spread(match, turn_quantity) %>%
   rownames_to_column(.,var = 'measure')
+  
+
 ```
 
 ```{r, compute the consistency of conversational input}
@@ -863,6 +968,8 @@ ctc_growth_tbl <- its_df %>%
   select(-slope, -p_value, -Pearson) %>%
   spread(match, stats) %>%
   mutate(measure='Convo. turn growth') 
+
+
 ```
 
 ## Model turns
@@ -878,14 +985,13 @@ hourly_turns_m0 <- lmer(normed_hourly_turns~ + (1 | child_id) + (1|hours), data=
 hourly_turns_m1 <- lmer(normed_hourly_turns~ match+ (1 | child_id) + (1|hours), data=hourly_turns)
 anova(hourly_turns_m0,hourly_turns_m1)
 
-
 # ---------- CONSISTENCY ------------
 convo_consis_check2 <- its_df %>% select(age_mos, child_id) %>% merge(., convo_consis_check, by='child_id')
 convo_consis_check2$match <- relevel(factor(convo_consis_check2$match), ref = "CI")
 convo_consis_m0 <- lm(perc_turns~age_mos, data=convo_consis_check2)
 convo_consis_m1 <- lm(perc_turns~ age_mos + match, data=convo_consis_check2)
 anova(convo_consis_m0,convo_consis_m1) # no
-voc_consis_m2 <- lm(perc_turns~ age_mos*match, data=convo_consis_check2)
+convo_consis_m2 <- lm(perc_turns~ age_mos*match, data=convo_consis_check2)
 anova(convo_consis_m0,voc_consis_m2) # no
 ```
 
@@ -916,8 +1022,10 @@ total_chn <- contingent_df %>%
   distinct(child_id, .keep_all = T) %>%
   select(child_id, total_vocs)
 
+# first filter to only get child vocs that were directly contingent with an adult 
 contingent_df_lag <- contingent_df %>%  
-  filter(contingent=='Y' & segment_type=='CHN' & (lag(segment_type=='FAN')|lag(segment_type=='MAN'))) # filter to only get child vocs that were contingent with an adult; this dataframe includes the temporal measures for contingent vocalizations 
+  filter(contingent=='Y' & segment_type=='CHN' & (lag(segment_type=='FAN')|lag(segment_type=='MAN'))) 
+
 
 contingent_df2 <- contingent_df_lag %>% 
   count(contingent) %>% # this is the correct count of contingent vocs 
@@ -933,25 +1041,28 @@ contingent_final <- contingent_df_CI %>%
   filter(!hearing_age<=12) %>%
   mutate(match='CI_by_hearing_age') %>%
   rbind(contingent_df2)
+  
 ```
 
 ```{r, compute temporal dynamics}
 # make a dataframe containing the timestamps for all child-adult vocal interactions
 # within a 2-second 'contingent' window
-# computing over all vocalizations, regardless of temporal window, results in lots and lots of meaningless
-# outliers e.g. 50seconds between adult and child vocalization 
+
 for_temp <- vocs %>% 
   select(child_id, onset, offset, segment_type, hours) %>%
-  rename(clip_onset = onset,
-         clip_offset = offset)
+  mutate(clip_onset = onset,
+         clip_offset = offset) %>%
+  select(-offset, -onset)
 
-time_vocs <- speech %>%
+pre_time_vocs <- speech %>%
   select(child_id, clip_onset, clip_offset, segment_type, hours) %>%
   rbind(., for_temp) %>%
   arrange(child_id, clip_offset) %>%
   group_by(child_id) %>%
   mutate(speech_lag = clip_onset - lag(clip_offset, default = clip_offset[1])) %>% # calculate lag time
-  mutate(contingent = if_else(speech_lag <=2, "Y", "N")) %>%
+  mutate(contingent = if_else(speech_lag <=2, "Y", "N")) 
+
+time_vocs <- pre_time_vocs %>%
   filter(contingent=='Y' & segment_type=='CHN' & (lag(segment_type=='FAN')|lag(segment_type=='MAN'))) %>% # filter to only get child vocs contingent with an adult
   merge(its_df, by='child_id') %>%
   group_by(child_id,hours) %>%
@@ -968,7 +1079,7 @@ time_vocs_final <- time_vocs_CI %>%
   rbind(time_vocs)
 ```
 
-```{r, split by intensity}
+```{r, compute split by intensity}
 # classify each adult vocalization as high vs low intensity
 med_meas <- contingent_df %>%
   filter(segment_type=='FAN' | segment_type=='MAN') %>% # only compute median over input
@@ -978,13 +1089,14 @@ med_meas <- contingent_df %>%
 intens <- contingent_df %>%
   merge(., med_meas, by='child_id') %>%
   group_by(child_id) %>%
-  mutate(adult_loudness = if_else(avg_dB>med_dB, "loud", "soft"))
+  mutate(adult_loudness = if_else(avg_dB>med_dB, "louder", "softer"))
 
 total_voc_df <- total_chn %>% distinct_at(., vars(child_id,total_vocs)) #dataframe containing total num of child vocs 
 
 all_intens_vocs <- intens %>%  
   group_by(child_id) %>%
   mutate(adult_loudness=lag(adult_loudness)) %>% # put the adult voc classification in the same row as the child voc
+  mutate(child_voc_dB=avg_dB) %>% # classify the dB as child dB because we're going to filter for that
   mutate(adult_voc_dB=lag(avg_dB)) %>% # put the adult voc dB measurement in the same row as the child voc
   select(-avg_dB) %>%
   filter(contingent=='Y' & segment_type=='CHN' & (lag(segment_type=='FAN')|lag(segment_type=='MAN'))) %>% # filter to only get child vocs that were contingent with an adult
@@ -998,46 +1110,10 @@ all_intens_vocs <- intens %>%
 intens2 <- all_intens_vocs %>%
   distinct_at(., vars(child_id, adult_loudness), .keep_all = T) %>%
   select(-adult_voc_dB, -med_dB, -speech_lag,  -clip_offset, -clip_onset) # clean up
+  
 ```
 
 ## Visualize contingency
-
-```{r, visualize perc contingent vocs by hearing group}
-# do a binary split among the CI kids to examine the effects of hearing experience 
-# upon vocal contingency 
-
-cont_boxplot <- contingent_final %>% 
-  filter(match=='CI') %>%
-  mutate(med_hearing_age = median(hearing_age)) %>%
-  mutate(match=if_else(hearing_age >= med_hearing_age, 'more', 'less')) %>%
-  select(-med_hearing_age)
-
-cont_boxplot2 <- contingent_final %>%
-  filter(match=='HA' | match=='chrono') %>%
-  rbind(., cont_boxplot)
-
-cont_boxplot2 %>%
-  mutate(match=factor(match, levels = c("chrono", "more", "less", "HA"))) %>%
-   mutate(match=recode(match,
-                      chrono='Chrono. \n age matches',
-                      more='CI with >= 29 mos \n hearing',
-                      less='CI with < 29 mos \n hearing',
-                      HA='Hearing \n age matches')) %>%
-ggplot(., aes(match, perc_contingent)) +
-  geom_jitter(aes(color=match, fill=match,shape=match),size=2.8,width = .1,alpha=.65) +
-  geom_boxplot(aes(fill=match), alpha=.4, color='gray50', outlier.shape = NA) +
-  scale_color_manual(values=c("#1B9E77", "#7570B3", "purple4", "#E7298A"))+
-  scale_fill_manual(values=c("#1B9E77", "#7570B3", "purple4", "#E7298A")) +
-  scale_shape_manual(values=c(15,16,16,17)) +
-  #xlab("Hearing experience") +
-  ylab("Percentage of \n contingent vocalizations") + 
-  #ggtitle("Contingent vocalizations, by hearing group") + 
-  theme(legend.position = "none",
-        axis.title.y = element_text(face ="bold", size=12),
-        axis.title.x = element_blank(),
-        axis.text = element_text(face="bold", color='gray50', size=7),
-        plot.title = element_text(face="bold", size=16))
-```
 
 ```{r, visualize perc contingent vocs by age}
 contingent_final %>%
@@ -1059,6 +1135,9 @@ ggplot(., aes(age_mos, perc_contingent)) +
         legend.position = "none", 
         axis.text = element_text(face="bold", color='gray50', size=9),
         strip.text=element_text(face='bold', size=10))
+ggsave("../noise_pilotData/CI_ICPhS/CI_ICPhS_results_files/contingent_age.pdf", width = 8, height = 3)
+
+ 
 ```
 
 ```{r, visualize split by intensity}
@@ -1079,7 +1158,6 @@ ggplot(., aes(x=adult_loudness, y=perc_contingent_loudness)) +
    scale_color_manual(values=c("#1B9E77", "#7570B3", "#E7298A"))+
      scale_alpha_manual(values=c(.3, .5))+
   scale_shape_manual(values=c(15,16,17)) +
-
   labs(x="Intensity of caregiver speech",y="Percentage of all \n vocalizations that are contingent") +
   guides(alpha="none", fill = "none",color="none",shape="none") +
   theme(legend.position = c(.8, .8),
@@ -1091,107 +1169,30 @@ ggplot(., aes(x=adult_loudness, y=perc_contingent_loudness)) +
         panel.grid.major.x = element_blank(),
         strip.text.x = element_text(face = "bold",size=13),
         strip.background = element_rect(fill = "gray60", size = 1)) 
-```
-
-```{r, visualize temporal dyanmics by hearing group}
-temp_boxplot <- time_vocs_final %>% 
-  filter(match=='CI') %>%
-  mutate(med_hearing_age = median(hearing_age)) %>%
-  mutate(match=if_else(hearing_age >= med_hearing_age, 'more', 'less')) %>%
-  select(-med_hearing_age)
-
-temp_boxplot2 <- time_vocs_final %>%
-  filter(match=='HA' | match=='chrono') %>%
-  rbind(., temp_boxplot)
-```
-
-```{r, plot histograms to illustrate group level differences in temporal dynamics of vocal contingency}
-time_vocs_final %>%
-  filter(match!='CI_by_hearing_age') %>%
-  mutate(match=factor(match, levels=c("chrono","CI","HA"))) %>%
-  mutate(match=recode(match,
-                      chrono='Chrono. \n age matches',
-                      CI='Cochlear implant',
-                      HA='Hearing \n age matches')) %>%
-ggplot(., aes(speech_lag*1000,fill=match,alpha=match)) + 
-  geom_histogram(bins=25) +
-  facet_grid(~match) +
-  scale_color_manual(values=c("#1B9E77","#7570B3","#E7298A")) +
-  scale_fill_manual(values=c("#1B9E77","#7570B3","#E7298A")) +
-  scale_alpha_manual(values=c(.4,.6,.7)) +
-  xlab('Temporal lag between adult and child vocalization (ms)') +
-     theme(axis.title = element_text(face ="bold", size=12),
-        legend.position = "none",
-        axis.text = element_text(face="bold", color='gray50', size=9),
-        strip.text=element_text(face='bold', size=10))
 
 ```
 
 ## Model contingency
 
-```{r, model contingent vocalizations}
+```{r, model contingent vocalizations, eval=FALSE}
 # ------- look at percentage contingent -------
 # look at just three groups
-contingent_final_3 <- contingent_final %>% filter(match!='CI_by_hearing_age')
-contingent_final_3$match <- relevel(factor(contingent_final_3$match), ref = "chrono")
+contingent_final_3 <- contingent_final %>% 
+  filter(match!='CI_by_hearing_age') %>%
+  mutate(age_mos_centered=center_scale(age_mos),
+         hearing_age_centered=center_scale(hearing_age))
+contingent_final_3$match <- relevel(factor(contingent_final_3$match), ref = "HA")
 m1 <- lm(perc_contingent~match, data=contingent_final_3)
 
 # what's the correlation between age and perc contingent for kids with CIs?
-ci_for_cor <- contingent_final_3 %>% filter(match=='CI')
-ci_cor <- cor.test(ci_for_cor$age_mos, ci_for_cor$perc_contingent)
-ci_cor_aoi <- cor.test(ci_for_cor$age_of_implantation, ci_for_cor$perc_contingent)
-
-# look at HA, chrono, and more vs. less hearing experience groups
-cont_boxplot2$match <- relevel(factor(cont_boxplot2$match), ref = "HA")
-ha_model <- lm(perc_contingent~match, data=cont_boxplot2)
-summary(ha_model) # the kids with more experience differ from the hearing age matches, as expected
-cont_boxplot2$match <- relevel(factor(cont_boxplot2$match), ref = "chrono")
-chrono_model <- lm(perc_contingent~match, data=cont_boxplot2)
-summary(chrono_model) # the kids with less experience differ from the chrono age matches, as expected
-
-cont_m0 <- lm(perc_contingent~age_mos, data=contingent_final_3) 
-cont_m1 <- lm(perc_contingent~age_mos + match, data=contingent_final_3) 
-anova(cont_m0, cont_m1)
-cont_m2 <- lm(perc_contingent~age_mos*match, data=contingent_final_3) 
-anova(cont_m1, cont_m2)
-
-# ------ look at temporal dynamics -------
-# for all kids?
-time_vocs_final2 <- time_vocs_final %>% filter(match!='chrono')
-time_vocs_final2$match <- relevel(factor(time_vocs_final2$match), ref = "CI")
-m0_lag <- lmer(speech_lag*1000~match + (1 | child_id), data=time_vocs_final2)
-m1_lag <- lmer(speech_lag*1000~ match+age_mos+(1|child_id), data=time_vocs_final2)
-anova(m0_lag,m1_lag) # no improvement 
-m2_lag <- lmer(speech_lag*1000~ match*age_mos+(1|child_id), data=time_vocs_final2)
-anova(m1_lag,m2_lag) # no improvement 
-
-# what's the association between age and temporal synchrony for kids with CIs?
-ci_temp_for_model <- time_vocs_final %>% filter(match=='CI')
-ci_temp_m <- lmer(speech_lag*1000~hearing_age + (1|child_id), data=ci_temp_for_model)
-
-# look at HA, chrono, and more vs. less hearing experience groups for temporal synchrony
-temp_boxplot2$match <- relevel(factor(temp_boxplot2$match), ref = "HA")
-ha_temp_model <- lmer(speech_lag*1000~match+(1|child_id), data=temp_boxplot2)
-summary(ha_temp_model) # the kids with more experience differ from the hearing age matches, as expected
-temp_boxplot2$match <- relevel(factor(temp_boxplot2$match), ref = "chrono")
-chrono_temp_model <- lmer(speech_lag*1000~match+(1|child_id), data=temp_boxplot2)
-summary(chrono_temp_model) # the kids with less experience differ from the chrono age matches, as expected
+ci_for_model <- contingent_final_3 %>% filter(match=='CI')
+ci_cor <- cor.test(ci_for_model$age_mos_centered, ci_for_model$perc_contingent)
+ci_cor_ha <- cor.test(ci_for_model$hearing_age_centered, ci_for_model$perc_contingent)
 ```
 
 ```{r, model intensity and contingent vocalizations}
-center_scale <- function(x) {
-    scale(x, scale = FALSE)
-}
 all_intens_vocs <- all_intens_vocs %>%
   mutate(adult_voc_dB_centered = center_scale(adult_voc_dB)) 
-
-#not using these
-intens2$match <- relevel(factor(intens2$match), ref = "CI")
-intens_m0 <- lm(perc_contingent_loudness~adult_loudness, data=intens2)
-intens_m1 <- lm(perc_contingent_loudness~match+adult_loudness, data=intens2)
-anova(intens_m0,intens_m1)
-intens_m2 <- lm(perc_contingent_loudness~match*adult_loudness, data=intens2)
-anova(intens_m1,intens_m2) # no interaction
 
 # repeated measures model:
 # hearing status?
@@ -1340,8 +1341,8 @@ num_vocs$match <- relevel(factor(num_vocs$match), ref = "CI")
 in_out_m0 <- lm(normed_vocs~normed_turns_centered+age_mos_centered, data=num_vocs)
 in_out_m1 <- lm(normed_vocs~normed_words_centered+age_mos_centered, data=num_vocs)
 # turns results in a better model fit
-AIC(in_out_m0) #560.5966
-AIC(in_out_m1) #611.2076
+AIC(in_out_m0) 
+AIC(in_out_m1) 
 
 # match improves
 in_out_m2 <- lm(normed_vocs~match, data=num_vocs)
@@ -1376,7 +1377,6 @@ speech_consis_tbl
 # Output
 voc_tbl
 voc_consis_tbl
-
 # Interaction
 convo_consis_tbl
 turn_quantity_tbl
@@ -1400,8 +1400,11 @@ row.names(meas_mat) <- c("Recording duration (hrs.)",
                            "Child voc. quantity",
                            "Voc. duration (ms)",
                            "Child voc. consistency",
+                           #"Input:output", # maybe include this?
+                           #"% contingent vocs.",
                            "Convo. turn quantity",
                            "Convo turn consistency")
+
 
 kable(meas_mat,
              caption= "Measures of the naturalistic speech environment, by hearing group",
@@ -1414,12 +1417,15 @@ kable(meas_mat,
   pack_rows(., "Input", 2,5) %>%
   pack_rows(., "Output", 6,9) %>%
   pack_rows(., "Interaction", 10,11)
+
+
 ```
 
 ## Growth in measures table
 ```{r, create growth table}
 # we create a separate table here because comparing four "matches" (to include growth by hearing age)
 growth_tbl <- input_growth_tbl  %>%
+  rbind(., speech_input_growth_tbl) %>%
   rbind(., voc_growth_tbl) %>%
   rbind(., voc_dur_growth_tbl) %>%
   rbind(., ctc_growth_tbl) %>%
@@ -1438,5 +1444,27 @@ kable(growth_tbl, booktabs=T,
 
 # note that in the ICPhS paper I reported the p-value for CI hearing age that included the two kids
 # with HA < 12
+```
+
+## Create audiological measures table
+```{r, create aud table}
+
+matches %>%
+  filter(match=='CI') %>%
+  select(child_id, age_mos_at_recording, age_hearing_lost_mos, age_of_implantation, hearing_age, etiology, device_config, activation) %>%
+  mutate(age_hearing_lost_mos=as.factor(age_hearing_lost_mos)) %>%
+kable(., booktabs=T, 
+              caption= "Audiological information from children with cochlear implants",
+              col.names = c("Participant", 
+                            "Chronological age", 
+                           "Age at hearing loss (mos)", 
+                           "Age at activation", 
+                           "Hearing age (since implantation)",
+                           "Etiology",
+                           "Device configuration",
+                           "Activation")) %>%
+  kable_styling() %>%
+  kable_styling(latex_options = "hold_position")
+
 ```
 
