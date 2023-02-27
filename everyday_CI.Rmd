@@ -87,9 +87,9 @@ speech_df <- plyr::ldply( .data = list.files(pattern="*AN_timestamps.csv",
                                     recursive=TRUE, ignore.case = TRUE),
                     .fun = read.csv) %>% 
   select(-X) %>%
+  filter(child_id %in% matches$child_id) %>%
   filter(duration<10) %>% # clips >10s are much more likely to be mislabeled
   mutate(corpus = substring(child_id, 4, 4)) %>%
-  filter(child_id %in% matches$child_id) %>%
   mutate(hours = hour(seconds_to_period(seconds)), 
          minutes = minute(seconds_to_period(seconds))) %>%
  merge(., its_df, by=c('corpus', 'child_id')) %>%
@@ -123,9 +123,7 @@ voc_df <- plyr::ldply( .data = list.files(pattern="*CHN_timestamps.csv",
   mutate(avg_dB=avg_dB+97,
          peak_dB=peak_dB+97) %>% # scale intensity into something interpretable  
   mutate(childUttLen=as.numeric(str_sub(childUttLen,2,-2)),
-         childCryVfxLen=as.numeric(str_sub(childCryVfxLen,2,-2))) %>%
-  filter(childUttLen!='0') %>% # 0 utt length indicates cries; remove them
-  filter(childCryVfxLen=='0') # also remove the vocalizations that *contain* cries as we can't distinguish
+         childCryVfxLen=as.numeric(str_sub(childCryVfxLen,2,-2))) 
 ```
 
 # Read in data
@@ -135,13 +133,11 @@ its_df <- read.csv('dataframes/icphs_voc_its.csv') %>%
   merge(., matches, by=c('child_id')) %>% # merge with demo info
   select(-X.x, -X.y)
 
-vocs <- read.csv('dataframes/icphs_voc_voc.csv') %>%
-  merge(., matches, by=c('child_id')) %>% 
-  select(-X.x, -X.y)
+pre_vocs <- read.csv('dataframes/icphs_voc_voc.csv') %>%
+  select(-X)
 
-speech <- read.csv('dataframes/icphs_speech.csv') %>%
-  merge(., matches, by ='child_id') %>% 
-  select(-X.x, -X.y)
+pre_speech <- read.csv('dataframes/icphs_speech.csv') %>%
+  select(-X)
 
 convo <- read.csv('dataframes/icphs_ctc.csv') %>%
   merge(., matches, by ='child_id') %>% 
@@ -187,6 +183,15 @@ num_chrono_speech <- speech %>%
 print(paste('There should be 18 chronological age matches and there are', num_chrono_speech))
 ```
 
+```{r, clean speech and voc clips wo speech }
+speech <- pre_speech %>%
+  filter(nonSpeechDur=="P0.00S") # remove any clips that contain non-speech
+
+vocs <- pre_vocs %>%
+  filter(childUttLen!='0') %>% # 0 utt length indicates cries; remove them
+  filter(childCryVfxLen=='0') # also remove the vocalizations that *contain* cries as we can't distinguish
+```
+
 ```{r, get measures for flow chart}
 # duration of segments
 adult_dur <- speech %>%
@@ -205,6 +210,8 @@ convo_dur <- convo %>%
 # counts of segments
 voc_cts <- vocs %>%
   nrow()
+pre_voc_cts <- pre_vocs %>%
+  nrow() 
 ```
 
 # Demo info
@@ -783,7 +790,7 @@ speech_input_growth_tbl <- its_df %>%
   mutate(stats=paste0('B=',slope,",","p=",p_value, ",","r=", Pearson)) %>%
   select(-slope, -p_value, -Pearson) %>%
   spread(match, stats) %>%
-  mutate(measure='Adult speech (minutes) growth') 
+  mutate(measure='Adult speech (s) growth') 
 ```
 
 ## Visualize input
