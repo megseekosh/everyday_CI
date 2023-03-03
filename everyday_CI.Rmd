@@ -214,6 +214,18 @@ pre_voc_cts <- pre_vocs %>%
   nrow() 
 ```
 
+```{r, compare siblings and household members by group}
+matches_methods <- matches %>%
+  mutate(num_siblings=as.numeric(num_siblings_excluding_child),
+           num_members=as.numeric(num_household_including_child))
+
+aov(num_siblings~match, data=matches_methods) %>%
+  summary(.)
+
+aov(num_members~match, data=matches_methods) %>%
+  summary(.)
+```
+
 # Demo info
 ```{r, device configuration info}
 ci_device <- matches %>%
@@ -305,6 +317,15 @@ kable(demo_tbl, booktabs=T,
   kableExtra::kable_styling(latex_options = "hold_position")
 ```
 
+```{r, family composition tables for supp materials I}
+sib_ct <- matches %>% 
+  group_by(match,num_siblings_excluding_child) %>%
+  count(num_siblings_excluding_child)
+
+birth_ct <- matches %>% 
+  group_by(match,birth_order) %>%
+  count(birth_order)
+```
 # Vocalization analyses
 
 ## Compute vocalizations
