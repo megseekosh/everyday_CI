@@ -1,5 +1,6 @@
 ---
-title: "everyday_CI"
+title: "Replicating results for 'The everyday speech environments of preschoolers with
+and without cochlear implants' after removing the child activated at 45 mos"
 author: "Meg Cychosz"
 date: "`r format(Sys.time(), '%d %B %Y')`"
 output: 
@@ -30,6 +31,7 @@ library('broom.mixed')
 library('tibble')
 
 opts_chunk$set(echo = TRUE,warning=FALSE,error=FALSE,message=FALSE)
+knitr::opts_knit$set(root.dir = 'Library/CloudStorage/Box-Box/box-group-lena-studies/noise_pilotData/everyday_CI/')
 ```
 
 ```{r, define scaling}
@@ -131,17 +133,22 @@ voc_df <- plyr::ldply( .data = list.files(pattern="*CHN_timestamps.csv",
 # dataframe containing LENA data for the kids that are matched
 its_df <- read.csv('dataframes/icphs_voc_its.csv') %>%
   merge(., matches, by=c('child_id')) %>% # merge with demo info
-  select(-X.x, -X.y)
+  select(-X.x, -X.y) %>%
+  filter(child_id!='301ECV1')
 
 pre_vocs <- read.csv('dataframes/icphs_voc_voc.csv') %>%
-  select(-X)
+  select(-X) %>%
+  filter(child_id!='301ECV1')
 
 pre_speech <- read.csv('dataframes/icphs_speech.csv') %>%
-  select(-X)
+  select(-X) %>%
+  filter(child_id!='301ECV1')
+
 
 convo <- read.csv('dataframes/icphs_ctc.csv') %>%
   merge(., matches, by ='child_id') %>% 
-  select(-X.x, -X.y)
+  select(-X.x, -X.y) %>%
+  filter(child_id!='301ECV1')
 ```
 
 ```{r, sanity check the participants}
@@ -149,7 +156,7 @@ num_CI <- pre_vocs %>%
   distinct_at(., vars(child_id, match)) %>%
   filter(match=='CI') %>%
   nrow()
-print(paste('There should be 18 children w/ CIs and there are', num_CI))
+print(paste('There should be 17 children w/ CIs and there are', num_CI))
 
 num_ha <- pre_vocs %>% 
   distinct_at(., vars(child_id, match)) %>%
@@ -164,7 +171,7 @@ num_chrono <- pre_vocs %>%
   nrow()
 print(paste('There should be 18 chronological age matches and there are', num_chrono))
 
-num_CI_speech <- pre_speech %>% 
+num_CI_speech <- speech %>% 
   distinct_at(., vars(child_id, match)) %>%
   filter(match=='CI') %>%
   nrow()
@@ -192,140 +199,6 @@ vocs <- pre_vocs %>%
   filter(childCryVfxLen=='0') # also remove the vocalizations that *contain* cries as we can't distinguish
 ```
 
-```{r, get measures for flow chart}
-# duration of segments
-adult_dur <- speech %>%
-  group_by(segment_type) %>%
-  summarize(total_dur = sum(duration)) %>%
-  summarize(total_dur_hour = (total_dur/60)/60)
-
-voc_dur <- vocs %>%
-  summarize(total_dur = sum(duration)) %>%
-  summarize(total_dur_hour = (total_dur/60)/60)
-
-convo_dur <- convo %>%
-  summarize(total_dur = sum(duration)) %>%
-  summarize(total_dur_hour = (total_dur/60)/60)
-
-# counts of segments
-voc_cts <- vocs %>%
-  nrow()
-pre_voc_cts <- pre_vocs %>%
-  nrow() 
-```
-
-```{r, compare siblings and household members by group}
-matches_methods <- matches %>%
-  mutate(num_siblings=as.numeric(num_siblings_excluding_child),
-           num_members=as.numeric(num_household_including_child))
-
-aov(num_siblings~match, data=matches_methods) %>%
-  summary(.)
-
-aov(num_members~match, data=matches_methods) %>%
-  summary(.)
-```
-
-# Demo info
-```{r, device configuration info}
-ci_device <- matches %>%
-  filter(match=='CI') %>%
-  count(device_config)
-```
-
-```{r, make the demo info table}
-gender <- its_df %>%
-  group_by(match) %>%
-  count(gender) %>%
-  spread(gender, n) %>%
-  mutate(Gender=paste0(`FALSE`,',',M)) %>%
-  select(match, Gender) %>%
-  spread(key='match', value='Gender') %>%
-  mutate(measure='Gender (F,M)')
-
-demo <- its_df %>%
-  group_by(match) %>%
-  summarize(chrono_age = mean(age_mos),
-            chrono_age_sd = sd(age_mos),
-            chrono_age_min = min(age_mos),
-            chrono_age_max = max(age_mos),
-            mat_ed = mean(Maternal_education_level),
-            mat_ed_sd = sd(Maternal_education_level),
-            mat_ed_min = min(Maternal_education_level),
-            mat_ed_max = max(Maternal_education_level)) %>%
-    mutate_if(is.numeric, round, 2) %>%
-  mutate(Chrono_age=paste0(chrono_age, '(', chrono_age_sd, ')', ',',chrono_age_min, '-', chrono_age_max),
-         Mat_ed=paste0(mat_ed,'(',mat_ed_sd,')',',',mat_ed_min,'-',mat_ed_max)) 
-
-mat_ed <- demo %>%
-  select(match, Mat_ed) %>%
-  spread(match, Mat_ed) %>%
-  mutate(measure='Maternal Education') 
-
-household <- matches %>% 
-  group_by(match) %>%
-  summarize(avg_sibs = mean(num_siblings_excluding_child),
-            sd_sibs = sd(num_siblings_excluding_child),
-            min_sibs = min(num_siblings_excluding_child),
-            max_sibs = max(num_siblings_excluding_child),
-            avg_mem = mean(num_household_including_child),
-            sd_mem = sd(num_household_including_child),
-            min_mem = min(num_household_including_child),
-            max_mem = max(num_household_including_child)) %>%
-  mutate_if(is.numeric, round, 2) %>%
-  mutate(Siblings=paste0(avg_sibs, '(', sd_sibs, ')', ',',min_sibs, '-', max_sibs),
-         Household_members=paste0(avg_mem,'(',sd_mem,')',',',min_mem,'-',max_mem)) %>%
-  select(match, Siblings,Household_members)
-
-ci_demo <- its_df %>%
-  filter(match=='CI') %>%
-  summarize(ha_mean=mean(hearing_age),
-            ha_sd=sd(hearing_age),
-            ha_min=min(hearing_age),
-            ha_max=max(hearing_age),
-            implant_mean=mean(age_of_implantation),
-            implant_sd=sd(age_of_implantation),
-            implant_min=min(age_of_implantation),
-            implant_max=max(age_of_implantation)) %>%
-  mutate_if(is.numeric, round, 2) %>%
-  mutate(`Hearing Age (mos)`=paste0(ha_mean,'(',ha_sd,')',',',ha_min,'-',ha_max),
-         `Implant Age (mos)`=paste0(implant_mean,'(',implant_sd,')',',',implant_min,'-',implant_max)) %>%
-  select(`Hearing Age (mos)`,`Implant Age (mos)`) %>%
-  gather(key='measure',value='stat',`Hearing Age (mos)`,`Implant Age (mos)`) %>%
-  rename(CI=stat) %>%
-  mutate(chrono='NA',
-         HA='NA')
-  
-  
-demo_tbl <- demo %>%
-  select(match, Chrono_age) %>%
-  spread(match, Chrono_age) %>%
-  mutate(measure='Chrono. Age (mos)') %>%
-  rbind(., gender) %>%
-  rbind(., mat_ed) %>%
-  rbind(., ci_demo) %>%
-  select(measure, everything())
-
-kable(demo_tbl, booktabs=T, 
-              caption= "Demographic and audiological information. Mean (SD), range.",
-             row.names = FALSE,
-       col.names = c(" ",
-                    "Chrono. age matches",
-                    "Cochlear implant",
-                    "Hearing age matches")) %>% 
-  kable_styling() %>%
-  kableExtra::kable_styling(latex_options = "hold_position")
-```
-
-```{r, family composition tables for supp materials I}
-sib_ct <- matches %>% 
-  group_by(match,num_siblings_excluding_child) %>%
-  count(num_siblings_excluding_child)
-
-birth_ct <- matches %>% 
-  group_by(match,birth_order) %>%
-  count(birth_order)
-```
 # Vocalization analyses
 
 ## Compute vocalizations
@@ -396,7 +269,7 @@ voc_tbl <- intensity %>%
 ```{r, compute the consistency of vocalizations}
 # compute the percentage of minutes in the child's day with >1 vocalization
 
-time_steps <- rep(seq(60,57600,60),times=52) %>% as.data.frame() 
+time_steps <- rep(seq(60,57600,60),times=51) %>% as.data.frame() 
 time_steps$seconds <- time_steps$.
 ids <- vocs %>% distinct(child_id) 
 ids_repeat <- rep(ids$child_id,960) %>% as.data.frame()
@@ -524,7 +397,7 @@ voc_dur_growth_tbl <- vocs %>%
 its_df %>%
   select(child_id, age_mos) %>%
   merge(., recording_vocs, by='child_id') %>%
-  rbind(., ha_kids) %>%
+  rbind(., ha_kids) %>% 
 mutate(match=recode(match,
                       chrono='Chrono. \n age matches',
                       CI='CI by \n chrono. age',
@@ -584,13 +457,13 @@ voc_intensity_m1 <- lmer(avg_dB~match + (1 | child_id), data=vocs)
 anova(voc_intensity_m0,voc_intensity_m1)
 
 # duration
+vocs$match <- relevel(factor(vocs$match), ref = "chrono")
 hourly_vocLen_m0 <- lmer(childUttLen*1000~ + (1 | child_id), data=vocs)
 hourly_vocLen_m1 <- lmer(childUttLen*1000~ match+ (1 | child_id), data=vocs)
 anova(hourly_vocLen_m0,hourly_vocLen_m1)
 
 
 # hourly measures 
-hourly_vocs$match <- relevel(factor(hourly_vocs$match), ref = "CI")
 hourly_vocs$hours <- as.factor(hourly_vocs$hours)
 hourly_vocs_m0 <- lmer(normed_hourly_vocs~ + (1 | child_id) + (1|hours), data=hourly_vocs)
 hourly_vocs_m1 <- lmer(normed_hourly_vocs~ match + (1 | child_id) + (1|hours), data=hourly_vocs)
@@ -718,7 +591,7 @@ kable(all_speech_quantity_tbl, booktabs=T,
 ```{r, compute the consistency of speech input}
 # compute the percentage of minutes in the child's day with > 1 AW 
 
-time_steps <- rep(seq(60,57600,60),times=52) %>% as.data.frame() 
+time_steps <- rep(seq(60,57600,60),times=51) %>% as.data.frame() 
 time_steps$seconds <- time_steps$.
 ids <- speech %>% distinct(child_id) 
 ids_repeat <- rep(ids$child_id,960) %>% as.data.frame()
@@ -921,7 +794,7 @@ turn_quantity_tbl <- convo %>%
 
 ```{r, compute the consistency of conversational input}
 # compute the percentage of epochs (5-min chunks) in the child's day with > 1 CT
-time_steps <- rep(seq(1,192,1),times=52) %>% as.data.frame() 
+time_steps <- rep(seq(1,192,1),times=51) %>% as.data.frame() 
 time_steps$epochs <- time_steps$.
 ids <- convo %>% distinct(child_id) 
 ids_repeat <- rep(ids$child_id,192) %>% as.data.frame()
@@ -1206,7 +1079,7 @@ contingent_final_3 <- contingent_final %>%
   filter(match!='CI_by_hearing_age') %>%
   mutate(age_mos_centered=center_scale(age_mos),
          hearing_age_centered=center_scale(hearing_age))
-contingent_final_3$match <- relevel(factor(contingent_final_3$match), ref = "HA")
+contingent_final_3$match <- relevel(factor(contingent_final_3$match), ref = "CI")
 contingent_m0 <- lm(perc_contingent~match, data=contingent_final_3)
 contingent_m1 <- lm(perc_contingent~age_mos_centered, data=contingent_final_3)
 contingent_m2 <- lm(perc_contingent~hearing_age_centered, data=contingent_final_3)
@@ -1216,8 +1089,6 @@ contingent_m3 <- lm(perc_contingent~match*age_mos_centered, data=contingent_fina
 binary_intens_m0 <- lmer(perc_contingent_loudness~ + (1 | child_id), data=intens2)
 binary_intens_m1 <- lmer(perc_contingent_loudness~adult_loudness + (1 | child_id), data=intens2)
 anova(binary_intens_m0,binary_intens_m1) # yes 
-binary_intens_m2 <- lmer(perc_contingent_loudness~adult_loudness*match + (1 | child_id), data=intens2)
-anova(binary_intens_m1,binary_intens_m2)
 ```
 
 ```{r, model intensity and contingent vocalizations}
@@ -1243,6 +1114,7 @@ intens_m4 <- lmer(speech_lag*1000~adult_voc_dB_centered + match + (1 | child_id)
 anova(intens_m3, intens_m4)
 intens_m5 <- lmer(speech_lag*1000~adult_voc_dB_centered*match + (1 | child_id), data=all_intens_vocs)
 anova(intens_m3, intens_m5)
+
 ```
 
 ```{r, create model summary table}
@@ -1476,25 +1348,4 @@ kable(growth_tbl, booktabs=T,
 # with HA < 12
 ```
 
-## Create audiological measures table
-```{r, create aud table}
-
-matches %>%
-  filter(match=='CI') %>%
-  select(child_id, age_mos_at_recording, age_hearing_lost_mos, age_of_implantation, hearing_age, etiology, device_config, activation) %>%
-  mutate(age_hearing_lost_mos=as.factor(age_hearing_lost_mos)) %>%
-kable(., booktabs=T, 
-              caption= "Audiological information from children with cochlear implants",
-              col.names = c("Participant", 
-                            "Chronological age", 
-                           "Age at hearing loss (mos)", 
-                           "Age at activation", 
-                           "Hearing age (since implantation)",
-                           "Etiology",
-                           "Device configuration",
-                           "Activation")) %>%
-  kable_styling() %>%
-  kable_styling(latex_options = "hold_position")
-
-```
 
