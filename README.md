@@ -29,7 +29,7 @@ Cychosz, M., Edwards, J. R., Munson, B., Romeo, R. R., Kosie, J., & Newman, R. S
 
 * `everyday_CI.Rmd` - main results markdown; also contains explanatory code to process .its files (but note that .its files are not shared publicly so that code chunk is for presentation purposes only)
 
-* `supp_III.Rmd` - results markdown to successfully replicate results after removing the child who was implanted at 45 mos (outlier) 
+* `supp_II.Rmd` - results markdown to successfully replicate results after removing the child who was implanted at 45 mos (outlier) 
 
 # manuscript and figures
 
@@ -37,9 +37,7 @@ Cychosz, M., Edwards, J. R., Munson, B., Romeo, R. R., Kosie, J., & Newman, R. S
 
 * `supp_materialsI.pdf` - supplementary materials with additional information about household composition
 
-* `supp_materialsII.pdf` - supplementary materials to explore timing of vocal contingency 
-
-* `supp_materialsIII.pdf` - supplementary materials to replicate modeling results after removing child with activation age of 45 mos
+* `supp_materialsII.pdf` - supplementary materials to replicate modeling results after removing child with activation age of 45 mos
 
 * `figures/` - directory containing figures found in manuscript
 
